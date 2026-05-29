@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Go
+bin/
+*.exe
+*.test
+*.out
+
+# Build
+dist/
+.build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Database
+*.db
+
+# Docker
+docker-compose.override.yml
+
+# TanStack Router
+apps/web/src/routeTree.gen.ts
