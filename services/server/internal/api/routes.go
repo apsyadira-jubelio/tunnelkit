@@ -4,6 +4,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/tunnelkit/services/server/internal/config"
 	"github.com/tunnelkit/services/server/internal/tunnel"
+	"go.uber.org/zap"
 )
 
 func SetupRoutes(e *echo.Echo, deps *Dependencies) {
@@ -34,8 +35,13 @@ func SetupRoutes(e *echo.Echo, deps *Dependencies) {
 	tunnels.GET("", deps.Tunnel.List)
 	tunnels.POST("", deps.Tunnel.Create)
 	tunnels.GET("/:id", deps.Tunnel.GetByID)
-	tunnels.PATCH("/:id", func(c echo.Context) error { return c.JSON(501, map[string]string{"status": "not implemented"}) })
+	tunnels.PATCH("/:id", deps.Tunnel.Update)
 	tunnels.DELETE("/:id", deps.Tunnel.Delete)
+
+	// Tunnel logs
+	tunnelLogs := protected.Group("/tunnels/:id/logs")
+	tunnelLogs.GET("", deps.TunnelLogs.List)
+	tunnelLogs.GET("/stream", deps.TunnelLogs.Stream)
 
 	// API Keys
 	apiKeys := protected.Group("/api-keys")
@@ -45,13 +51,22 @@ func SetupRoutes(e *echo.Echo, deps *Dependencies) {
 
 	// WebSocket endpoint for tunnel agents
 	e.GET("/ws/agent", deps.TunnelHub.HandleWS, deps.JWTMiddleware)
+
+	// Metrics
+	e.GET("/metrics", deps.Prometheus)
 }
 
 type Dependencies struct {
 	Config        *config.Config
 	Auth          *AuthHandler
 	Tunnel        *TunnelHandler
+	TunnelLogs    *TunnelLogHandler
 	APIKey        *APIKeyHandler
 	TunnelHub     *tunnel.TunnelHub
+	ProxyServer   *tunnel.ProxyServer
+	TLSServer     *tunnel.TLSManager
+	TCPServer     *tunnel.TCPServer
 	JWTMiddleware echo.MiddlewareFunc
+	Logger        *zap.Logger
+	Prometheus    echo.HandlerFunc
 }

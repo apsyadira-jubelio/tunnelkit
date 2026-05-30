@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"github.com/tunnelkit/services/server/internal/api"
@@ -47,18 +48,29 @@ func main() {
 	tunnelRepo := repository.NewPostgresTunnelRepo(pool)
 	apiKeyRepo := repository.NewPostgresAPIKeyRepo(pool)
 	auditRepo := repository.NewPostgresAuditLogRepo(pool)
+	tunnelLogRepo := repository.NewPostgresTunnelLogRepo(pool)
 
 	// Handlers
 	authHandler := api.NewAuthHandler(userRepo, auditRepo, cfg)
 	tunnelHandler := api.NewTunnelHandler(tunnelRepo, auditRepo, cfg)
 	apiKeyHandler := api.NewAPIKeyHandler(apiKeyRepo, auditRepo, cfg)
+	tunnelLogHandler := api.NewTunnelLogHandler(tunnelLogRepo)
 
 	// Tunnel hub
 	tunnelHub := tunnel.NewTunnelHub()
 
-	// Subdomain router
-	subdomainRouter := tunnel.NewSubdomainRouter(tunnelHub, tunnelRepo, cfg.BaseDomain)
-	_ = subdomainRouter // TODO: integrate with ingress
+	// Proxy server
+	proxyServer := tunnel.NewProxyServer(tunnelHub, logger)
+
+	// TLS manager
+	tlsManager := tunnel.NewTLSManager(&tunnel.TLSConfig{
+		Domain:      cfg.BaseDomain,
+		CertDir:     "/tmp/tunnelkit-certs",
+		Development: !cfg.TLSEnabled,
+	})
+
+	// TCP server
+	tcpServer := tunnel.NewTCPServer(tunnelHub, logger)
 
 	// Echo setup
 	e := echo.New()
@@ -73,20 +85,33 @@ func main() {
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
 	}))
 
+	// Prometheus metrics handler
+	prometheusHandler := func(c echo.Context) error {
+		promhttp.Handler().ServeHTTP(c.Response(), c.Request())
+		return nil
+	}
+
 	// Routes
 	api.SetupRoutes(e, &api.Dependencies{
 		Config:        cfg,
 		Auth:          authHandler,
 		Tunnel:        tunnelHandler,
+		TunnelLogs:    tunnelLogHandler,
 		APIKey:        apiKeyHandler,
 		TunnelHub:     tunnelHub,
+		ProxyServer:   proxyServer,
+		TLSServer:     tlsManager,
+		TCPServer:     tcpServer,
 		JWTMiddleware: api.JWTAuth(cfg),
+		Logger:        logger,
+		Prometheus:    prometheusHandler,
 	})
 
 	// Start server
 	go func() {
 		addr := fmt.Sprintf(":%s", cfg.Port)
 		logger.Info("Server starting", zap.String("addr", addr))
+		
 		if err := e.Start(addr); err != nil {
 			logger.Error("Server error", zap.Error(err))
 		}

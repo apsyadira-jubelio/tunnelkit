@@ -44,7 +44,7 @@ func (h *TunnelHandler) Create(c echo.Context) error {
 
 	subdomain := &req.Subdomain
 	if req.Subdomain == "" {
-		// Auto-generate
+		// Auto-generate unique subdomain
 		random := uuid.New().String()[:8]
 		autoSubdomain := req.Name + "-" + random
 		subdomain = &autoSubdomain
@@ -106,6 +106,64 @@ func (h *TunnelHandler) GetByID(c echo.Context) error {
 	if tunnel.UserID.String() != userID {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
+
+	return c.JSON(http.StatusOK, tunnel)
+}
+
+func (h *TunnelHandler) Update(c echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid tunnel id")
+	}
+
+	tunnel, err := h.tunnelRepo.GetByID(c.Request().Context(), id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "tunnel not found")
+	}
+
+	userID := c.Get("user_id").(string)
+	if tunnel.UserID.String() != userID {
+		return echo.NewHTTPError(http.StatusForbidden, "access denied")
+	}
+
+	var req struct {
+		Name        string   `json:"name"`
+		Subdomain   string   `json:"subdomain"`
+		AuthType    string   `json:"auth_type"`
+		IPAllowlist []string `json:"ip_allowlist"`
+		Status      string   `json:"status"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if req.Name != "" {
+		tunnel.Name = req.Name
+	}
+	if req.Subdomain != "" {
+		tunnel.Subdomain = &req.Subdomain
+	}
+	if req.AuthType != "" {
+		tunnel.AuthType = req.AuthType
+	}
+	if req.IPAllowlist != nil {
+		tunnel.IPAllowlist = req.IPAllowlist
+	}
+	if req.Status != "" {
+		tunnel.Status = req.Status
+	}
+
+	if err := h.tunnelRepo.Update(c.Request().Context(), tunnel); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update tunnel")
+	}
+
+	go h.auditRepo.Create(c.Request().Context(), &domain.AuditLog{
+		ActorID:   uuid.MustParse(userID),
+		Action:    "tunnel.update",
+		Resource:  "tunnels:" + tunnel.ID.String(),
+		IPAddress: c.RealIP(),
+		CreatedAt: time.Now(),
+	})
 
 	return c.JSON(http.StatusOK, tunnel)
 }
